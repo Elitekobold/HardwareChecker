@@ -22,5 +22,6 @@
         <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
             <StackPanel x:Name="InfoPanel" Orientation="Vertical" />
         </ScrollViewer>
+        <Button Content="Speichern" HorizontalAlignment="Left" Height="32" Margin="585,5,0,0" VerticalAlignment="Top" Width="141" Click="Button_Click"/>
     </Grid>
 </Window>
