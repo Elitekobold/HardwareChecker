@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.IO;
 using System.Linq;
 using System.Management;
@@ -12,41 +12,50 @@ namespace HardwareInfoApp
 {
     public partial class MainWindow : Window
     {
-         
+        private sealed class SavedComputer
+        {
+            public long Id { get; set; }
+            public string Name { get; set; }
+            public string Ort { get; set; }
+            public string CpuName { get; set; }
+            public int? CpuCores { get; set; }
+            public string CpuManufacturer { get; set; }
+            public string GpuName { get; set; }
+            public string GpuManufacturer { get; set; }
+            public string MotherboardName { get; set; }
+            public string MotherboardManufacturer { get; set; }
+            public string Ram { get; set; }
+            public string RamSpeed { get; set; }
+            public string Memory { get; set; }
+            public string DisplayName => $"#{Id} - {Name}";
+        }
+
         // Hardware-Klassenvariablen
-         
         private string CPUName;
         private int CPUCores;
-        private string CPUManufacturer;     // NEU
+        private string CPUManufacturer;
         private string CPUVersion;
 
         private string GPUName;
-        private string GPUManufacturer;     // NEU
+        private string GPUManufacturer;
         private string GPUVersion;
 
         private double RAMSize;
-        private string RAMSpeed;            // NEU
+        private string RAMSpeed;
 
         private string MotherboardModel;
         private string MotherboardManufacturer;
 
-        private string DiskModel;           // wird als "Memory" zusammengefasst genutzt
-        private string MemorySummary;       // NEU (statt nur Textausgabe)
+        private string DiskModel;
+        private string MemorySummary;
 
-         
         // Computer / DB-Klassenvariablen
-         
-        private string ComputerName;        // NEU
-        private string Ort;                 // NEU (Standort)
-        private string DbPath;              // NEU
-        private string ConnectionString;    // NEU
+        private string ComputerName;
+        private string Ort;
+        private string DbPath;
+        private string ConnectionString;
 
-        // USB Label (Stick)
-        private const string UsbLabel = "Luesvbi";
-
-         
         // SQL (Schema + Upserts)
-         
         private const string SqlEnableFk = "PRAGMA foreign_keys = ON;";
 
         private const string SqlSchema = @"
@@ -120,26 +129,89 @@ VALUES
   ($name, $ort, $cpu_name, $gpu_name, $motherboard_name, $ram, $ram_speed, $memory);
 SELECT last_insert_rowid();";
 
+        private const string SqlSelectAllComputers = @"
+SELECT
+    c.id,
+    c.name,
+    c.ort,
+    c.ram,
+    c.ram_speed,
+    c.memory,
+    c.cpu_name,
+    cpu.kerne,
+    cpu.hersteller AS cpu_hersteller,
+    c.gpu_name,
+    gpu.hersteller AS gpu_hersteller,
+    c.motherboard_name,
+    motherboard.hersteller AS motherboard_hersteller
+FROM computer c
+LEFT JOIN cpu ON cpu.name = c.cpu_name
+LEFT JOIN gpu ON gpu.name = c.gpu_name
+LEFT JOIN motherboard ON motherboard.name = c.motherboard_name
+ORDER BY c.id DESC;";
+
         public MainWindow()
         {
             InitializeComponent();
 
-            // Computer Name initial setzen
             ComputerName = Environment.MachineName;
-
-            // Ort optional: hier leer (kannst du später aus UI befüllen)
             Ort = "";
 
-            DisplayHardwareInfo();
+            ShowCurrentHardwareDetails();
         }
 
-        private void DisplayHardwareInfo()
+        private void ShowCurrentHardwareDetails()
         {
+            InfoPanel.Children.Clear();
+            DetailTitleText.Text = "System Hardware Information";
+            BackToListButton.Visibility = Visibility.Collapsed;
             AddSection("CPU Information", GetCPUInfo());
             AddSection("GPU Information", GetGPUInfo());
             AddSection("RAM Information", GetRAMInfo());
             AddSection("Disk Information", GetDiskInfo());
             AddSection("Motherboard Information", GetMotherboardInfo());
+
+            DetailViewGrid.Visibility = Visibility.Visible;
+            ListViewGrid.Visibility = Visibility.Collapsed;
+        }
+
+        private void ShowSavedComputerDetails(SavedComputer computer)
+        {
+            InfoPanel.Children.Clear();
+            DetailTitleText.Text = $"Gespeicherter Rechner: {ValueOrUnknown(computer.Name)}";
+            BackToListButton.Visibility = Visibility.Visible;
+
+            var cpuText = new StringBuilder();
+            cpuText.AppendLine($"Name: {ValueOrUnknown(computer.CpuName)}");
+            cpuText.AppendLine($"Manufacturer: {ValueOrUnknown(computer.CpuManufacturer)}");
+            cpuText.AppendLine($"Cores: {(computer.CpuCores.HasValue ? computer.CpuCores.Value.ToString() : "Unknown")}");
+
+            var gpuText = new StringBuilder();
+            gpuText.AppendLine($"Name: {ValueOrUnknown(computer.GpuName)}");
+            gpuText.AppendLine($"Manufacturer: {ValueOrUnknown(computer.GpuManufacturer)}");
+
+            var ramText = $"Installed RAM: {ValueOrUnknown(computer.Ram)}\nRAM Speed: {ValueOrUnknown(computer.RamSpeed)}";
+
+            var diskText = $"Memory: {ValueOrUnknown(computer.Memory)}";
+
+            var moboText = new StringBuilder();
+            moboText.AppendLine($"Manufacturer: {ValueOrUnknown(computer.MotherboardManufacturer)}");
+            moboText.AppendLine($"Product: {ValueOrUnknown(computer.MotherboardName)}");
+
+            var metaText = new StringBuilder();
+            metaText.AppendLine($"Computer Name: {ValueOrUnknown(computer.Name)}");
+            metaText.AppendLine($"Ort: {ValueOrUnknown(computer.Ort)}");
+            metaText.AppendLine($"Datenbank-ID: {computer.Id}");
+
+            AddSection("Computer", metaText.ToString());
+            AddSection("CPU Information", cpuText.ToString());
+            AddSection("GPU Information", gpuText.ToString());
+            AddSection("RAM Information", ramText);
+            AddSection("Disk Information", diskText);
+            AddSection("Motherboard Information", moboText.ToString());
+
+            DetailViewGrid.Visibility = Visibility.Visible;
+            ListViewGrid.Visibility = Visibility.Collapsed;
         }
 
         private void AddSection(string title, string content)
@@ -171,9 +243,9 @@ SELECT last_insert_rowid();";
                 foreach (var obj in searcher.Get())
                 {
                     CPUName = obj["Name"]?.ToString();
-                    CPUManufacturer = obj["Manufacturer"]?.ToString(); // NEU
+                    CPUManufacturer = obj["Manufacturer"]?.ToString();
                     CPUCores = Convert.ToInt32(obj["NumberOfCores"] ?? 0);
-                    CPUVersion = obj["ProcessorId"]?.ToString();       // optional (ID als "Version")
+                    CPUVersion = obj["ProcessorId"]?.ToString();
 
                     sb.AppendLine($"Name: {CPUName}");
                     sb.AppendLine($"Manufacturer: {CPUManufacturer}");
@@ -194,7 +266,7 @@ SELECT last_insert_rowid();";
                 {
                     GPUName = obj["Name"]?.ToString();
                     GPUVersion = obj["DriverVersion"]?.ToString();
-                    GPUManufacturer = obj["AdapterCompatibility"]?.ToString(); // NEU
+                    GPUManufacturer = obj["AdapterCompatibility"]?.ToString();
 
                     double ramGB = 0;
                     if (obj["AdapterRAM"] != null)
@@ -214,7 +286,6 @@ SELECT last_insert_rowid();";
 
         private string GetRAMInfo()
         {
-            // Gesamt RAM
             using (var searcher = new ManagementObjectSearcher("select * from Win32_ComputerSystem"))
             {
                 foreach (var obj in searcher.Get())
@@ -225,14 +296,15 @@ SELECT last_insert_rowid();";
                 }
             }
 
-            // RAM Speed (max. aus allen Riegeln)
             var speeds = new List<int>();
             using (var searcher = new ManagementObjectSearcher("select Speed from Win32_PhysicalMemory"))
             {
                 foreach (var obj in searcher.Get())
                 {
                     if (obj["Speed"] != null && int.TryParse(obj["Speed"].ToString(), out var s))
+                    {
                         speeds.Add(s);
+                    }
                 }
             }
 
@@ -252,7 +324,9 @@ SELECT last_insert_rowid();";
                 {
                     double sizeGB = 0;
                     if (obj["Size"] != null)
+                    {
                         sizeGB = Math.Round(Convert.ToDouble(obj["Size"]) / (1024 * 1024 * 1024), 2);
+                    }
 
                     var model = obj["Model"]?.ToString();
                     var iface = obj["InterfaceType"]?.ToString();
@@ -262,9 +336,10 @@ SELECT last_insert_rowid();";
                     sb.AppendLine($"Size: {sizeGB} GB");
                     sb.AppendLine();
 
-                    // Für DB als "Memory" zusammenfassen
                     if (!string.IsNullOrWhiteSpace(model))
+                    {
                         memoryParts.Add($"{model} ({sizeGB} GB)");
+                    }
                 }
             }
 
@@ -292,37 +367,17 @@ SELECT last_insert_rowid();";
             return sb.ToString();
         }
 
-         
         // DB Helpers
-         
         private void EnsureDbPathAndConnection()
         {
-            // 1) Versuche Stick zu finden (Drive Label = LMSDB)
-            // 2) Fallback: lokale Datei in AppData
-            var removable = DriveInfo.GetDrives()
-                .Where(d => d.IsReady && d.DriveType == DriveType.Removable)
-                .FirstOrDefault(d => string.Equals(d.VolumeLabel, UsbLabel, StringComparison.OrdinalIgnoreCase));
+            var appDir = AppDomain.CurrentDomain.BaseDirectory;
+            DbPath = Path.Combine(appDir, "app.db");
 
-            if (removable != null)
-            {
-                var root = removable.RootDirectory.FullName; // z.B. "E:\"
-                DbPath = Path.Combine(root, "db", "app.db");
-            }
-            else
-            {
-                var localDir = Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                    "HardwareInfoApp",
-                    "db"
-                );
-                Directory.CreateDirectory(localDir);
-                DbPath = Path.Combine(localDir, "app.db");
-            }
-
-            // Ordner sicherstellen
             var dir = Path.GetDirectoryName(DbPath);
             if (!string.IsNullOrWhiteSpace(dir))
+            {
                 Directory.CreateDirectory(dir);
+            }
 
             ConnectionString = new SqliteConnectionStringBuilder
             {
@@ -331,13 +386,83 @@ SELECT last_insert_rowid();";
             }.ToString();
         }
 
-        /*private void EnsureSchema(SqliteConnection con, SqliteTransaction tx)
+        private void EnsureSchema(SqliteConnection con, SqliteTransaction tx = null)
         {
-            using var cmd = con.CreateCommand();
-            cmd.Transaction = tx;
-            cmd.CommandText = SqlSchema;
-            cmd.ExecuteNonQuery();
-        }*/
+            using (var fk = con.CreateCommand())
+            {
+                fk.Transaction = tx;
+                fk.CommandText = SqlEnableFk;
+                fk.ExecuteNonQuery();
+            }
+
+            using (var cmdSchema = con.CreateCommand())
+            {
+                cmdSchema.Transaction = tx;
+                cmdSchema.CommandText = SqlSchema;
+                cmdSchema.ExecuteNonQuery();
+            }
+        }
+
+        private static object DbOrNull(string value)
+        {
+            return string.IsNullOrWhiteSpace(value) ? (object)DBNull.Value : value;
+        }
+
+        private static string ValueOrUnknown(string value)
+        {
+            return string.IsNullOrWhiteSpace(value) ? "Unknown" : value;
+        }
+
+        private List<SavedComputer> LoadAllComputers()
+        {
+            EnsureDbPathAndConnection();
+            var list = new List<SavedComputer>();
+
+            if (!File.Exists(DbPath))
+            {
+                return list;
+            }
+
+            using (var con = new SqliteConnection(ConnectionString))
+            {
+                con.Open();
+                EnsureSchema(con);
+
+                using (var cmd = con.CreateCommand())
+                {
+                    cmd.CommandText = SqlSelectAllComputers;
+
+                    using (var reader = cmd.ExecuteReader())
+                    {
+                        while (reader.Read())
+                        {
+                            var cpuCores = reader.IsDBNull(reader.GetOrdinal("kerne"))
+                                ? (int?)null
+                                : reader.GetInt32(reader.GetOrdinal("kerne"));
+
+                            list.Add(new SavedComputer
+                            {
+                                Id = reader.GetInt64(reader.GetOrdinal("id")),
+                                Name = reader["name"] as string,
+                                Ort = reader["ort"] as string,
+                                CpuName = reader["cpu_name"] as string,
+                                CpuCores = cpuCores,
+                                CpuManufacturer = reader["cpu_hersteller"] as string,
+                                GpuName = reader["gpu_name"] as string,
+                                GpuManufacturer = reader["gpu_hersteller"] as string,
+                                MotherboardName = reader["motherboard_name"] as string,
+                                MotherboardManufacturer = reader["motherboard_hersteller"] as string,
+                                Ram = reader["ram"] as string,
+                                RamSpeed = reader["ram_speed"] as string,
+                                Memory = reader["memory"] as string
+                            });
+                        }
+                    }
+                }
+            }
+
+            return list;
+        }
 
         private void SaveToDatabase()
         {
@@ -349,23 +474,8 @@ SELECT last_insert_rowid();";
 
                 using (var tx = con.BeginTransaction())
                 {
-                    // FK aktivieren
-                    using (var fk = con.CreateCommand())
-                    {
-                        fk.Transaction = tx;
-                        fk.CommandText = SqlEnableFk;
-                        fk.ExecuteNonQuery();
-                    }
+                    EnsureSchema(con, tx);
 
-                    // Schema sicherstellen
-                    using (var cmdSchema = con.CreateCommand())
-                    {
-                        cmdSchema.Transaction = tx;
-                        cmdSchema.CommandText = SqlSchema;
-                        cmdSchema.ExecuteNonQuery();
-                    }
-
-                    // CPU upsert
                     if (!string.IsNullOrWhiteSpace(CPUName))
                     {
                         using (var cmdCpu = con.CreateCommand())
@@ -374,12 +484,11 @@ SELECT last_insert_rowid();";
                             cmdCpu.CommandText = SqlUpsertCpu;
                             cmdCpu.Parameters.AddWithValue("$name", CPUName);
                             cmdCpu.Parameters.AddWithValue("$kerne", CPUCores > 0 ? CPUCores : 1);
-                            cmdCpu.Parameters.AddWithValue("$hersteller", string.IsNullOrWhiteSpace(CPUManufacturer) ? "Unknown" : CPUManufacturer);
+                            cmdCpu.Parameters.AddWithValue("$hersteller", ValueOrUnknown(CPUManufacturer));
                             cmdCpu.ExecuteNonQuery();
                         }
                     }
 
-                    // GPU upsert
                     if (!string.IsNullOrWhiteSpace(GPUName))
                     {
                         using (var cmdGpu = con.CreateCommand())
@@ -387,12 +496,11 @@ SELECT last_insert_rowid();";
                             cmdGpu.Transaction = tx;
                             cmdGpu.CommandText = SqlUpsertGpu;
                             cmdGpu.Parameters.AddWithValue("$name", GPUName);
-                            cmdGpu.Parameters.AddWithValue("$hersteller", string.IsNullOrWhiteSpace(GPUManufacturer) ? "Unknown" : GPUManufacturer);
+                            cmdGpu.Parameters.AddWithValue("$hersteller", ValueOrUnknown(GPUManufacturer));
                             cmdGpu.ExecuteNonQuery();
                         }
                     }
 
-                    // Motherboard upsert
                     if (!string.IsNullOrWhiteSpace(MotherboardModel))
                     {
                         using (var cmdMobo = con.CreateCommand())
@@ -400,29 +508,28 @@ SELECT last_insert_rowid();";
                             cmdMobo.Transaction = tx;
                             cmdMobo.CommandText = SqlUpsertMotherboard;
                             cmdMobo.Parameters.AddWithValue("$name", MotherboardModel);
-                            cmdMobo.Parameters.AddWithValue("$hersteller", string.IsNullOrWhiteSpace(MotherboardManufacturer) ? "Unknown" : MotherboardManufacturer);
+                            cmdMobo.Parameters.AddWithValue("$hersteller", ValueOrUnknown(MotherboardManufacturer));
                             cmdMobo.ExecuteNonQuery();
                         }
                     }
 
-                    // Computer insert
                     using (var cmdPc = con.CreateCommand())
                     {
                         cmdPc.Transaction = tx;
                         cmdPc.CommandText = SqlInsertComputer;
 
-                        cmdPc.Parameters.AddWithValue("$name", string.IsNullOrWhiteSpace(ComputerName) ? "Unknown" : ComputerName);
-                        cmdPc.Parameters.AddWithValue("$ort", string.IsNullOrWhiteSpace(Ort) ? (object)DBNull.Value : Ort);
+                        cmdPc.Parameters.AddWithValue("$name", ValueOrUnknown(ComputerName));
+                        cmdPc.Parameters.AddWithValue("$ort", DbOrNull(Ort));
 
-                        cmdPc.Parameters.AddWithValue("$cpu_name", string.IsNullOrWhiteSpace(CPUName) ? (object)DBNull.Value : CPUName);
-                        cmdPc.Parameters.AddWithValue("$gpu_name", string.IsNullOrWhiteSpace(GPUName) ? (object)DBNull.Value : GPUName);
-                        cmdPc.Parameters.AddWithValue("$motherboard_name", string.IsNullOrWhiteSpace(MotherboardModel) ? (object)DBNull.Value : MotherboardModel);
+                        cmdPc.Parameters.AddWithValue("$cpu_name", DbOrNull(CPUName));
+                        cmdPc.Parameters.AddWithValue("$gpu_name", DbOrNull(GPUName));
+                        cmdPc.Parameters.AddWithValue("$motherboard_name", DbOrNull(MotherboardModel));
 
-                        cmdPc.Parameters.AddWithValue("$ram", RAMSize > 0 ? (RAMSize.ToString("0.##") + " GB") : (object)DBNull.Value);
-                        cmdPc.Parameters.AddWithValue("$ram_speed", string.IsNullOrWhiteSpace(RAMSpeed) ? (object)DBNull.Value : RAMSpeed);
-                        cmdPc.Parameters.AddWithValue("$memory", string.IsNullOrWhiteSpace(MemorySummary) ? (object)DBNull.Value : MemorySummary);
+                        cmdPc.Parameters.AddWithValue("$ram", RAMSize > 0 ? (object)(RAMSize.ToString("0.##") + " GB") : DBNull.Value);
+                        cmdPc.Parameters.AddWithValue("$ram_speed", DbOrNull(RAMSpeed));
+                        cmdPc.Parameters.AddWithValue("$memory", DbOrNull(MemorySummary));
 
-                        cmdPc.ExecuteScalar(); // last_insert_rowid() ignorieren oder speichern
+                        cmdPc.ExecuteScalar();
                     }
 
                     tx.Commit();
@@ -430,14 +537,73 @@ SELECT last_insert_rowid();";
             }
         }
 
+        private string BuildPreview(SavedComputer computer)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine($"Name: {ValueOrUnknown(computer.Name)}");
+            sb.AppendLine($"Ort: {ValueOrUnknown(computer.Ort)}");
+            sb.AppendLine();
+            sb.AppendLine($"CPU: {ValueOrUnknown(computer.CpuName)}");
+            sb.AppendLine($"CPU Kerne: {(computer.CpuCores.HasValue ? computer.CpuCores.Value.ToString() : "Unknown")}");
+            sb.AppendLine($"GPU: {ValueOrUnknown(computer.GpuName)}");
+            sb.AppendLine($"RAM: {ValueOrUnknown(computer.Ram)}");
+            sb.AppendLine($"RAM Speed: {ValueOrUnknown(computer.RamSpeed)}");
+            sb.AppendLine($"Memory: {ValueOrUnknown(computer.Memory)}");
+            sb.AppendLine($"Motherboard: {ValueOrUnknown(computer.MotherboardName)}");
+            return sb.ToString();
+        }
+
+        private void OpenSavedListButton_Click(object sender, RoutedEventArgs e)
+        {
+            var computers = LoadAllComputers();
+            SavedComputersListBox.ItemsSource = computers;
+
+            if (computers.Count == 0)
+            {
+                SavedComputerPreviewText.Text = "Keine gespeicherten Rechner in der Datenbank gefunden.";
+            }
+            else
+            {
+                SavedComputersListBox.SelectedIndex = 0;
+            }
+
+            DetailViewGrid.Visibility = Visibility.Collapsed;
+            ListViewGrid.Visibility = Visibility.Visible;
+        }
+
+        private void CloseSavedListButton_Click(object sender, RoutedEventArgs e)
+        {
+            ShowCurrentHardwareDetails();
+        }
+
+        private void SavedComputersListBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            var selected = SavedComputersListBox.SelectedItem as SavedComputer;
+            SavedComputerPreviewText.Text = selected == null ? "Bitte einen Rechner auswählen." : BuildPreview(selected);
+        }
+
+        private void OpenSelectedComputerButton_Click(object sender, RoutedEventArgs e)
+        {
+            var selected = SavedComputersListBox.SelectedItem as SavedComputer;
+            if (selected == null)
+            {
+                MessageBox.Show("Bitte zuerst einen gespeicherten Rechner auswählen.", "Hinweis", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            ShowSavedComputerDetails(selected);
+        }
+
+        private void BackToListButton_Click(object sender, RoutedEventArgs e)
+        {
+            OpenSavedListButton_Click(sender, e);
+        }
 
         // Button Handler
-
         private void Button_Click(object sender, RoutedEventArgs e)
         {
             try
             {
-
                 SaveToDatabase();
 
                 MessageBox.Show(
